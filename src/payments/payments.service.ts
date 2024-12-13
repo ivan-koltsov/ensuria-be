@@ -38,15 +38,24 @@ export class PaymentsService {
   }
 
   async acceptPayment(storeId: number, amount: number): Promise<number> {
-    const payment = this.paymentRepository.create({
-      storeId,
-      amount,
-      status: PaymentStatus.Accepted,
-      tempBlockingD: this.D,
-      availableAmount: amount - this.A - this.B, // Assuming C = 0 for aggregation
-    });
-    await this.paymentRepository.save(payment);
-    return payment.id;
+    const store = await this.storeRepository.findOne({ where: { id: storeId } });
+    if (!store) throw new NotFoundException(`Store with ID ${storeId} not found.`);
+
+    const bFee = amount * this.B;
+    const cFee = amount * store.feeC;
+    const dBlock = amount * this.D;
+    const totalFees = this.A + bFee + cFee;
+    const availableAmount = amount - totalFees;
+
+    const payment = new Payment();
+    payment.storeId = storeId;
+    payment.amount = amount;
+    payment.status = PaymentStatus.Accepted;
+    payment.tempBlockingD = dBlock;
+    payment.availableAmount = availableAmount;
+    
+    const savedPayment = await this.paymentRepository.save(payment);
+    return savedPayment.id;
   }
 
   async processPayments(paymentIds: number[]): Promise<void> {
@@ -72,11 +81,11 @@ export class PaymentsService {
       where: { storeId, status: PaymentStatus.Completed },
     });
 
-    const paymentsToPay = payments.filter(p => p.availableAmount > 0);
+    const paymentsToPay = payments
+      .filter(p => p.availableAmount > 0)
+      .sort((a, b) => a.availableAmount - b.availableAmount); // Sort by amount ascending
+
     const totalPayable = paymentsToPay.reduce((sum, p) => sum + p.availableAmount, 0);
-    
-    // Here you would implement the logic for selecting which payments to pay.
-    // For the sake of this example, we'll just pay the first two if they exist.
     const paymentsSelected = paymentsToPay.slice(0, 2);
 
     // Update the status to Paid

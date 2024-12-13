@@ -1,10 +1,10 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
 export enum PaymentStatus {
-  Accepted = 'accepted',
-  Processed = 'processed',
-  Completed = 'completed',
-  Paid = 'paid',
+  Accepted = 'ACCEPTED',
+  Processed = 'PROCESSED',
+  Completed = 'COMPLETED',
+  Paid = 'PAID'
 }
 
 @Entity()
@@ -15,15 +15,23 @@ export class Payment {
   @Column()
   storeId: number;
 
-  @Column()
+  @Column('decimal', { precision: 10, scale: 2 })
   amount: number;
 
-  @Column({ type: 'enum', enum: PaymentStatus, default: PaymentStatus.Accepted })
-  status: PaymentStatus;
+  @Column('decimal', { precision: 10, scale: 2 })
+  availableAmount: number;
 
-  @Column({ nullable: true })
+  @Column('decimal', { precision: 10, scale: 2 })
   tempBlockingD: number;
 
-  @Column({ nullable: true })
-  availableAmount: number;
+  @Column({
+    type: 'enum',
+    enum: PaymentStatus,
+    default: PaymentStatus.Accepted
+  })
+  status: PaymentStatus;
+
+  getFees(): number {
+    return this.amount - this.availableAmount;
+  }
 }

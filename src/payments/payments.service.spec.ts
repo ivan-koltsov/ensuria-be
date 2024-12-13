@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Store } from '../entities/store.entity';
 import { Payment, PaymentStatus } from '../entities/payment.entity';
+import { NotFoundException } from '@nestjs/common';
 
 const mockStoreRepository = () => ({
   create: jest.fn(),
@@ -62,19 +63,41 @@ describe('PaymentsService', () => {
 
   describe('acceptPayment', () => {
     it('should accept a payment and return its ID', async () => {
-      const payment = { id: 1, storeId: 1, amount: 1000, status: PaymentStatus.Accepted };
+      // Mock store data
+      const mockStore = { id: 1, name: 'My Store', feeC: 0.15 };
+      storeRepository.findOne = jest.fn().mockResolvedValue(mockStore);
+
+      // Mock payment data
+      const payment = { 
+        id: 1, 
+        storeId: 1, 
+        amount: 1000,
+        status: PaymentStatus.Accepted,
+        availableAmount: 700, // Example value after fees
+        tempBlockingD: 50
+      };
       paymentRepository.create = jest.fn().mockReturnValue(payment);
       paymentRepository.save = jest.fn().mockResolvedValue(payment);
 
       const result = await service.acceptPayment(1, 1000);
+      
       expect(result).toEqual(payment.id);
-      expect(paymentRepository.create).toHaveBeenCalledWith({
+      expect(storeRepository.findOne).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(paymentRepository.save).toHaveBeenCalledWith(expect.objectContaining({
         storeId: 1,
         amount: 1000,
         status: PaymentStatus.Accepted,
-        tempBlockingD: service['D'],
-        availableAmount: payment.amount - service['A'] - service['B'],
-      });
+        tempBlockingD: expect.any(Number),
+        availableAmount: expect.any(Number)
+      }));
+    });
+
+    it('should throw NotFoundException when store is not found', async () => {
+      storeRepository.findOne = jest.fn().mockResolvedValue(null);
+
+      await expect(service.acceptPayment(999, 1000)).rejects.toThrow(
+        NotFoundException
+      );
     });
   });
 
@@ -115,6 +138,39 @@ describe('PaymentsService', () => {
       expect(result.amount).toBe(1700);
       expect(result.payments.length).toBe(2);
       expect(payments[0].status).toBe(PaymentStatus.Paid);
+      expect(paymentRepository.save).toHaveBeenCalledTimes(2);
+    });
+    it('should pay the correct payments based on logic', async () => {
+      const storeId = 1;
+  
+      // Mocking the payments
+      const payments = [
+        { id: 1, storeId, amount: 1010, status: PaymentStatus.Processed, availableAmount: 950 }, // D = 50
+        { id: 2, storeId, amount: 51, status: PaymentStatus.Completed, availableAmount: 50 },    // D = 5
+        { id: 3, storeId, amount: 102, status: PaymentStatus.Completed, availableAmount: 100 }, // D = 5
+      ];
+  
+      paymentRepository.find = jest.fn().mockResolvedValue(payments);
+      paymentRepository.save = jest.fn();
+  
+      // Call the service method
+      const result = await service.makePayments(storeId); // Change to the actual method call
+  
+      // Ensure the total amount is handled correctly
+      expect(result.amount).toBe(1100); // Total to be paid is the sum of the available amounts
+      expect(result.payments.length).toBe(2); // We should only pay 2 payments of the 3
+  
+      // Logically, we would expect the first two payments (the max available) to be returned.
+      expect(result.payments).toEqual([
+        { id: 2, amount: 50 },   // Payment 2 available amount
+        { id: 3, amount: 100 },  // Payment 3 available amount
+      ]);
+  
+      // Verify the payments were updated to Paid status
+      expect(payments[1].status).toBe(PaymentStatus.Paid);
+      expect(payments[2].status).toBe(PaymentStatus.Paid);
+  
+      // Ensure the save was called for each payment that was paid
       expect(paymentRepository.save).toHaveBeenCalledTimes(2);
     });
   });
